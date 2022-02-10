@@ -1,13 +1,78 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence, pad_sequence, pack_sequence
 import math
 
+DEBUG_ON = True
+
 class ATAE_LSTM(nn.Module):
 
-    def __init__(self):
-        pass
+    def __init__(self, embed_dim, vocab_size, hidden_dim, polarities_dim=3, rnn_num_layers=1, batch_first=True, embedding_matrix=None):
+        super(ATAE_LSTM, self).__init__()
 
+        if embedding_matrix is None:
+            self.embed = nn.Embedding(vocab_size, embed_dim, padding_idx=0)
+        else:
+            self.embed = nn.Embedding.from_pretrained(torch.tensor(embedding_matrix, dtype=torch.float))
+            
+        self.squeeze_embedding = SqueezeEmbedding()
+        self.lstm = DynamicRNN(embed_dim * 2, hidden_dim, num_layers=rnn_num_layers, batch_first=batch_first)
+        self.attention = NoQueryAttention(hidden_dim + embed_dim, score_function='bi_linear')
+        self.dense = nn.Linear(hidden_dim, polarities_dim)
+
+    def forward(self, inputs):
+        text_indices, aspect_indices = inputs[0], inputs[1]
+
+        if DEBUG_ON:
+            print(f'text_indices: {text_indices}, \naspect_indices: {aspect_indices}')
+
+        x_len = torch.sum(text_indices != 0, dim=-1)
+        if DEBUG_ON:
+            print(f'x_len: {x_len}')
+        x_len_max = torch.max(x_len)
+        aspect_len = torch.sum(aspect_indices != 0, dim=-1).float()
+
+        x = self.embed(text_indices)
+        x = self.squeeze_embedding(x, x_len)
+        if DEBUG_ON:
+            print(f'x embed: {x}')
+
+        aspect = self.embed(aspect_indices)
+        if DEBUG_ON:
+            print(f'aspect embed: {aspect}')
+        
+        if DEBUG_ON:
+            print(f'torch.sum(aspect, dim=1): {torch.sum(aspect, dim=1)}')
+            print(f'aspect_len: {aspect_len}, aspect_len.unsqueeze(1): {aspect_len.unsqueeze(1)}')
+        aspect_pool = torch.div(torch.sum(aspect, dim=1), aspect_len.unsqueeze(1))
+        if DEBUG_ON:
+            print(f'aspect_pool: {aspect_pool}')
+            print(f'aspect_pool.unsqueeze(1): {aspect_pool.unsqueeze(1)}')
+        aspect = aspect_pool.unsqueeze(1).expand(-1, x_len_max, -1)
+        if DEBUG_ON:
+            print(f'aspect formatted: {aspect}')
+        x = torch.cat((aspect, x), dim=-1)
+
+        h, (_, _) = self.lstm(x, x_len)
+        ha = torch.cat((h, aspect), dim=-1)
+        print(f'h sizer: {h.size()}, ha size: {ha.size()}')
+
+        _, score = self.attention(ha)
+        if DEBUG_ON:
+            print(f'score : {score}, size: {score.size()}')
+
+        h_score = torch.bmm(score, h)
+        if DEBUG_ON:
+            print(f'h_score size: {h_score.size()}')
+
+        output = torch.squeeze(torch.bmm(score, h), dim=1)
+        if DEBUG_ON:
+            print(f'output size: {output.size()}')
+
+        out = self.dense(output)
+
+        return out
 
 class DynamicRNN(nn.Module):
 
@@ -52,21 +117,25 @@ class DynamicRNN(nn.Module):
     def forward(self, x, x_len):
         # x为一个batch的样本序列
         # x_len为x中每个样本的长度序列
-        print('rnn forward....')
-        print('x raw: ', x)
-        print('x len: ', x_len)
+        if DEBUG_ON:
+            print('start rnn forward ====>')
+            print('x raw: ', x)
+            print('x len: ', x_len)
 
         x_sort_idx = torch.sort(-x_len)[1].long() # x由大到小的排列的索引号
-        print('x_sort_idx: ', x_sort_idx)
+        if DEBUG_ON:
+            print('x_sort_idx: ', x_sort_idx)
 
         x_unsort_idx = torch.sort(x_sort_idx)[1].long()  # 用于恢复序列最初的排序（对序列的负数sort一次，再对返回的索引sort一次）
         x_len = x_len[x_sort_idx]
         x = x[x_sort_idx]
-        print('x_sort: ', x)
+        if DEBUG_ON:
+            print('x_sort: ', x)
 
         # pack_padded_sequence会把RNN每一步要处理的batch中每个样本的数据结构整理好，不用输入embedding层之后自行调整数据结构
         x_emb_p = pack_padded_sequence(x, x_len, batch_first=self.batch_first)
-        print('x_emb_p: ', x_emb_p)
+        if DEBUG_ON:
+            print('x_emb_p: ', x_emb_p)
 
         if self.rnn_type == 'LSTM':
             out_pack, (ht, ct) = self.RNN(x_emb_p, None)
@@ -80,20 +149,26 @@ class DynamicRNN(nn.Module):
         if self.only_use_last_hidden_state:
             return ht
         else:
-            print('out_pack: ', out_pack)
+            if DEBUG_ON:
+                print('out_pack: ', out_pack)
             out = pad_packed_sequence(out_pack, batch_first=self.batch_first)
-            print('out1: ', out)
+            if DEBUG_ON:
+                print('out1: ', out)
 
             out = out[0]
-            print('out2: ', out)
+            if DEBUG_ON:
+                print('out2: ', out)
             out = out[x_unsort_idx]
-            print('out3: ', out)
+            if DEBUG_ON:
+                print('out3: ', out)
 
-            print('ct: ', ct)
+            if DEBUG_ON:
+                print('ct: ', ct)
             if self.rnn_type == 'LSTM':
                 ct = torch.transpose(ct, 0, 1)[x_unsort_idx]
                 ct = torch.transpose(ct, 0, 1)
-
+        if DEBUG_ON:
+            print('<===== end rnn forward!')
         return out, (ht, ct)
 
 
@@ -146,7 +221,7 @@ class Attention(nn.Module):
         if self.weight is not None:
             self.weight.data.uniform_(-stdv, stdv)
 
-    def forrward(self, k, q):
+    def forward(self, k, q):
         if len(q.shape) == 2: # q_len missing
             q = torch.unsqueeze(q, dim=1)
         if len(k.shape) == 2: # k_len missing
@@ -178,7 +253,7 @@ class Attention(nn.Module):
         elif self.score_function == 'dot_product':
             kt = kx.permute(0, 2, 1)
             score = torch.bmm(qx, kt)  # bmm: 带batch维的矩阵乘法
-        elif self.score_function == 'scaledf_dot_product':
+        elif self.score_function == 'scaled_dot_product':
             kt = kx.permute(0, 2, 1)
             qkt = torch.bmm(qx, kt)  # bmm: 带batch维的矩阵乘法
             score = torch.div(qkt, math.sqrt(self.hidden_dim))
@@ -191,7 +266,7 @@ class Attention(nn.Module):
         # (n_head*?, q_len, hidden_dim)
         output = torch.cat(torch.split(output, mb_size, dim=0), dim=-1)  # (?, q_len, n_head*hidden_dim)
         output = self.proj(output)  # (?, q_len, out_dim)
-        output self.dropout(output)
+        output = self.dropout(output)
         return output, score
 
 class NoQueryAttention(Attention):
