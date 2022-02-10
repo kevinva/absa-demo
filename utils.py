@@ -28,6 +28,14 @@ def build_tokenizer(fnames, max_seq_len, dat_fname):
     return tokenizer
 
 
+def load_word_vec(path, word2idx=None, embed_dim=300):
+    pass
+
+
+def build_embedding_matrix(word2idx, embed_dim, dat_fname):
+    pass
+
+
 def pad_and_truncate(sequence, maxlen, dtype='int64', padding='post', truncating='post', value=0):
     x = (np.ones(maxlen) * value).astype(dtype)
     if truncating == 'pre':
@@ -72,6 +80,7 @@ class Tokenizer(object):
         if reverse:
             sequence = sequence[::-1]
         return pad_and_truncate(sequence, self.max_seq_len, padding=padding, truncating=truncating)
+
 
 
 class ABSADataset(Dataset):
