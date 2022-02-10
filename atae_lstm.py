@@ -56,17 +56,18 @@ class ATAE_LSTM(nn.Module):
 
         h, (_, _) = self.lstm(x, x_len)
         ha = torch.cat((h, aspect), dim=-1)
-        print(f'h sizer: {h.size()}, ha size: {ha.size()}')
+        if DEBUG_ON:
+            print(f'lstm h size: {h.size()}, \nha size: {ha.size()}')
 
         _, score = self.attention(ha)
         if DEBUG_ON:
-            print(f'score : {score}, size: {score.size()}')
+            print(f'score : {score}')
 
-        h_score = torch.bmm(score, h)
+        score_h = torch.bmm(score, h)
         if DEBUG_ON:
-            print(f'h_score size: {h_score.size()}')
+            print(f'score_h size: {score_h.size()}')
 
-        output = torch.squeeze(torch.bmm(score, h), dim=1)
+        output = torch.squeeze(score_h, dim=1)
         if DEBUG_ON:
             print(f'output size: {output.size()}')
 
