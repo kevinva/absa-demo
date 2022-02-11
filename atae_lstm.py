@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence, pad_sequence, pack_sequence
 import math
 
-DEBUG_ON = True
+DEBUG_ON = False
 
 class ATAE_LSTM(nn.Module):
 
