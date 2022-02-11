@@ -3,11 +3,15 @@ import os
 import numpy as np
 from torch.utils.data import Dataset
 
+DEBUG_ON = False
+
 def build_tokenizer(fnames, max_seq_len, dat_fname):
     if os.path.exists(dat_fname):
-        print('loading tokenizer: ', dat_fname)
+        if DEBUG_ON:
+            print('loading tokenizer: ', dat_fname)
         tokenizer = pickle.load(open(dat_fname, 'rb'))
-        print('finish!')
+        if DEBUG_ON:
+            print('finish!')
     else:
         text = ''
         for fname in fnames:
@@ -18,7 +22,8 @@ def build_tokenizer(fnames, max_seq_len, dat_fname):
                 text_left, _, text_right = [s.lower().strip() for s in lines[i].partition('$T$')]
                 aspect = lines[i + 1].lower().strip()
                 text_raw = text_left + ' ' + aspect + ' ' + text_right
-                print(f'aspect={aspect}| {text_raw}')
+                if DEBUG_ON:
+                    print(f'aspect={aspect}| {text_raw}')
                 text += text_raw + ' '
 
         tokenizer = Tokenizer(max_seq_len)
